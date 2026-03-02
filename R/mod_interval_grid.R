@@ -22,8 +22,9 @@ interval_grid_ui <- function(id) {
       column(3, selectInput(ns("agent_filter"), "Agent",
         choices = c("All"), selected = "All")),
       column(3, div(style = "padding-top: 25px;",
-        actionButton(ns("load_btn"), "Load Data", icon = icon("table"),
-                     class = "btn-primary btn-sm")
+        actionButton(ns("load_btn"), "Refresh Now", icon = icon("sync"),
+                     class = "btn-primary btn-sm"),
+        textOutput(ns("last_updated"), inline = TRUE)
       ))
     ),
     fluidRow(
@@ -59,8 +60,13 @@ interval_grid_server <- function(id) {
   moduleServer(id, function(input, output, session) {
     ns <- session$ns
 
+    # Auto-refresh every 60 seconds
+    auto_timer <- reactiveTimer(60000)
+
     # Reactive: load and process snapshots for selected date
-    grid_data <- eventReactive(input$load_btn, {
+    grid_data <- reactive({
+      auto_timer()
+      input$load_btn  # also refresh on manual click
       selected <- input$selected_date
 
       # Calculate hours_back from selected date to now
@@ -99,7 +105,13 @@ interval_grid_server <- function(id) {
         arrange(interval)
 
       list(grid = intervals, summary = summary_df)
-    }, ignoreNULL = FALSE)
+    })
+
+    # Last updated timestamp
+    output$last_updated <- renderText({
+      auto_timer()
+      paste("Updated:", format(Sys.time(), "%H:%M:%S"))
+    })
 
     # Update agent filter when data loads
     observeEvent(grid_data(), {
@@ -115,7 +127,7 @@ interval_grid_server <- function(id) {
       gd <- grid_data()
       df <- gd$grid
       if (nrow(df) == 0) {
-        return(reactable(data.frame(Message = "No data. Click 'Load Data'."),
+        return(reactable(data.frame(Message = "No data for selected date."),
           columns = list(Message = colDef(align = "center"))))
       }
 
