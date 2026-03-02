@@ -35,7 +35,7 @@ interval_grid_ui <- function(id) {
           width = 12,
           solidHeader = TRUE,
           div(style = "overflow-x: auto;",
-            uiOutput(ns("grid_wrap"))
+            reactableOutput(ns("grid_table"))
           )
         )
       )
@@ -61,74 +61,43 @@ interval_grid_server <- function(id) {
     ns <- session$ns
 
     auto_timer <- reactiveTimer(60000)
-    cached_grid <- reactiveVal(list(grid = data.frame(), summary = data.frame()))
-    first_load <- reactiveVal(TRUE)
 
-    # Fetch today's data — 36 hours back to capture overnight shifts
-    observe({
+    # Simple reactive — fetch today's data
+    grid_data <- reactive({
       auto_timer()
       input$load_btn
 
-      tryCatch({
-        today <- Sys.Date()
+      today <- Sys.Date()
 
-        aws  <- tryCatch(read_aws_snapshots(36), error = function(e) {
-          message(paste("Grid AWS error:", e$message))
-          data.frame()
-        })
-        five <- tryCatch(read_five9_snapshots(36), error = function(e) {
-          message(paste("Grid Five9 error:", e$message))
-          data.frame()
-        })
-        all_snaps <- bind_rows(aws, five)
+      # 36 hours back captures overnight shifts
+      aws  <- tryCatch(read_aws_snapshots(36), error = function(e) data.frame())
+      five <- tryCatch(read_five9_snapshots(36), error = function(e) data.frame())
+      all_snaps <- bind_rows(aws, five)
 
-        if (nrow(all_snaps) == 0) {
-          cached_grid(list(grid = data.frame(), summary = data.frame()))
-          first_load(FALSE)
-          return()
-        }
+      if (nrow(all_snaps) == 0) return(list(grid = data.frame(), summary = data.frame()))
 
-        if (!is.null(input$platform_filter) && input$platform_filter != "All") {
-          all_snaps <- all_snaps %>% filter(platform == input$platform_filter)
-        }
+      if (input$platform_filter != "All") {
+        all_snaps <- all_snaps %>% filter(platform == input$platform_filter)
+      }
 
-        spans <- build_spans(all_snaps)
-        if (nrow(spans) == 0) {
-          cached_grid(list(grid = data.frame(), summary = data.frame()))
-          first_load(FALSE)
-          return()
-        }
+      spans <- build_spans(all_snaps)
+      if (nrow(spans) == 0) return(list(grid = data.frame(), summary = data.frame()))
 
-        intervals <- spans_to_intervals(spans)
-        if (nrow(intervals) == 0) {
-          cached_grid(list(grid = data.frame(), summary = data.frame()))
-          first_load(FALSE)
-          return()
-        }
+      intervals <- spans_to_intervals(spans)
+      if (nrow(intervals) == 0) return(list(grid = data.frame(), summary = data.frame()))
 
-        # Filter to today (overnight rollovers already split by split_midnight)
-        intervals <- intervals %>% filter(date == today)
+      # Filter to today (overnight rollovers already split by split_midnight)
+      intervals <- intervals %>% filter(date == today)
+      if (nrow(intervals) == 0) return(list(grid = data.frame(), summary = data.frame()))
 
-        if (nrow(intervals) == 0) {
-          cached_grid(list(grid = data.frame(), summary = data.frame()))
-          first_load(FALSE)
-          return()
-        }
+      state_cols <- setdiff(names(intervals), c("agent_email", "platform", "date", "interval"))
+      summary_df <- intervals %>%
+        group_by(interval) %>%
+        summarise(across(all_of(state_cols), ~ sum(. > 0)), .groups = "drop") %>%
+        arrange(interval)
 
-        state_cols <- setdiff(names(intervals), c("agent_email", "platform", "date", "interval"))
-        summary_df <- intervals %>%
-          group_by(interval) %>%
-          summarise(across(all_of(state_cols), ~ sum(. > 0)), .groups = "drop") %>%
-          arrange(interval)
-
-        cached_grid(list(grid = intervals, summary = summary_df))
-      }, error = function(e) {
-        message(paste("Grid observe error:", e$message))
-      })
-      first_load(FALSE)
+      list(grid = intervals, summary = summary_df)
     })
-
-    grid_data <- reactive({ cached_grid() })
 
     # Update agent filter
     observeEvent(grid_data(), {
@@ -139,18 +108,7 @@ interval_grid_server <- function(id) {
         choices = c("All", agents), selected = input$agent_filter)
     })
 
-    # Grid table with loading state
-    output$grid_wrap <- renderUI({
-      if (first_load()) {
-        return(tags$div(
-          style = "display:flex; justify-content:center; align-items:center; padding:60px 0; flex-direction:column; gap:12px; color:#999;",
-          tags$div(class = "css-spinner"),
-          tags$div("Loading interval data...")
-        ))
-      }
-      reactableOutput(ns("grid_table"))
-    })
-
+    # Grid table
     output$grid_table <- renderReactable({
       gd <- grid_data()
       df <- gd$grid

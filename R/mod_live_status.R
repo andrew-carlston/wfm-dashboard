@@ -137,26 +137,6 @@ live_status_ui <- function(id) {
       .summary-chip:last-child { border-right: none; }
       .summary-chip .chip-count { font-size: 24px; font-weight: 700; line-height: 1; }
       .summary-chip .chip-label { font-size: 10px; text-transform: uppercase; letter-spacing: 0.5px; opacity: 0.9; margin-top: 2px; }
-      .spinner-wrap {
-        display: flex;
-        justify-content: center;
-        align-items: center;
-        padding: 80px 0;
-        flex-direction: column;
-        gap: 12px;
-        color: #999;
-      }
-      .css-spinner {
-        width: 40px;
-        height: 40px;
-        border: 4px solid #e9ecef;
-        border-top: 4px solid #007bff;
-        border-radius: 50%;
-        animation: spin 0.8s linear infinite;
-      }
-      @keyframes spin {
-        to { transform: rotate(360deg); }
-      }
     "))),
     fluidRow(
       column(3, selectInput(ns("platform_filter"), "Platform",
@@ -184,41 +164,24 @@ live_status_server <- function(id) {
     ns <- session$ns
 
     auto_timer <- reactiveTimer(60000)
-    first_load <- reactiveVal(TRUE)
 
-    # Cache: holds last good dataset so UI never blanks during refresh
-    cached_data <- reactiveVal(data.frame())
-
-    # Fetch new data silently — update cache only when ready
-    observe({
+    # Simple reactive — just fetch data
+    live_data <- reactive({
       auto_timer()
       input$refresh_btn
 
-      tryCatch({
-        aws  <- tryCatch(read_latest_aws(), error = function(e) {
-          message(paste("AWS read error:", e$message))
-          data.frame()
-        })
-        five <- tryCatch(read_latest_five9(), error = function(e) {
-          message(paste("Five9 read error:", e$message))
-          data.frame()
-        })
+      aws  <- tryCatch(read_latest_aws(), error = function(e) data.frame())
+      five <- tryCatch(read_latest_five9(), error = function(e) data.frame())
 
-        df <- bind_rows(aws, five)
-        if (nrow(df) > 0) {
-          df <- df %>% mutate(duration_fmt = fmt_duration(status_duration))
-        }
+      df <- bind_rows(aws, five)
+      if (nrow(df) == 0) return(data.frame())
 
-        cached_data(df)
-      }, error = function(e) {
-        message(paste("Live status observe error:", e$message))
-      })
-      first_load(FALSE)
+      df %>% mutate(duration_fmt = fmt_duration(status_duration))
     })
 
     # Update filter choices
-    observeEvent(cached_data(), {
-      df <- cached_data()
+    observeEvent(live_data(), {
+      df <- live_data()
       if (nrow(df) == 0) return()
 
       statuses <- sort(unique(df$status_name))
@@ -230,9 +193,9 @@ live_status_server <- function(id) {
         choices = c("All", profiles), selected = input$routing_filter)
     })
 
-    # Filtered data (reads from cache — always instant)
+    # Filtered data
     filtered_data <- reactive({
-      df <- cached_data()
+      df <- live_data()
       if (nrow(df) == 0) return(data.frame())
 
       if (input$platform_filter != "All") {
@@ -249,7 +212,6 @@ live_status_server <- function(id) {
 
     # Summary bar
     output$summary_bar <- renderUI({
-      if (first_load()) return(NULL)
       df <- filtered_data()
       if (nrow(df) == 0) return(NULL)
 
@@ -280,22 +242,15 @@ live_status_server <- function(id) {
 
     # Status cards — one card per status with agent table inside
     output$status_cards <- renderUI({
-      if (first_load()) {
-        return(tags$div(class = "spinner-wrap",
-          tags$div(class = "css-spinner"),
-          tags$div("Loading agent data...")
-        ))
-      }
-
       df <- filtered_data()
       if (nrow(df) == 0) {
-        return(tags$div(class = "spinner-wrap",
+        return(tags$div(
+          style = "text-align:center; padding:60px 0; color:#999;",
           tags$i(class = "fas fa-users", style = "font-size: 40px;"),
-          tags$div("No agents online")
+          tags$div(style = "margin-top:12px;", "No agents online")
         ))
       }
 
-      # Split by status, ordered
       df <- df %>%
         mutate(status_order = sapply(status_name, function(s) get_config(s)$order)) %>%
         arrange(status_order, agent_email)
@@ -314,7 +269,6 @@ live_status_server <- function(id) {
           filter(status_name == status) %>%
           arrange(desc(status_duration))
 
-        # Build table rows
         rows <- lapply(seq_len(nrow(agents)), function(j) {
           a <- agents[j, ]
           platform_class <- if (a$platform == "AWS") "platform-aws" else "platform-five9"
