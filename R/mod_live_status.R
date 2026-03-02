@@ -85,9 +85,14 @@ live_status_server <- function(id) {
           },
           contact_state = sapply(contacts, function(c) {
             if (is.na(c) || c == "" || c == "null") return("")
-            parsed <- tryCatch(fromJSON(c), error = function(e) list())
+            parsed <- tryCatch(fromJSON(c, simplifyVector = FALSE), error = function(e) list())
             if (length(parsed) == 0) return("")
-            paste(sapply(parsed, function(x) paste0(x$state, " (", x$channel, ")")), collapse = ", ")
+            paste(sapply(parsed, function(x) {
+              st <- if (!is.null(x[["state"]])) x[["state"]] else x[["AgentContactState"]]
+              ch <- if (!is.null(x[["channel"]])) x[["channel"]] else x[["Channel"]]
+              if (is.null(st)) return("")
+              paste0(st, if (!is.null(ch)) paste0(" (", ch, ")") else "")
+            }), collapse = ", ")
           })
         )
     })
