@@ -74,7 +74,9 @@ interval_grid_server <- function(id, active_tab = reactive("live")) {
       auto_timer()
       input$load_btn
 
-      today <- Sys.Date()
+      # Use CST date for "today" since intervals are in CST
+      today <- as.Date(with_tz(Sys.time(), "America/Chicago"))
+      message(paste("[GRID] Today (CST):", today))
 
       message("[GRID] Fetching snapshots (36hr)...")
       # 36 hours back captures overnight shifts
@@ -82,10 +84,12 @@ interval_grid_server <- function(id, active_tab = reactive("live")) {
         message(paste("[GRID] AWS error:", e$message))
         data.frame()
       })
+      message(paste("[GRID] AWS rows:", nrow(aws)))
       five <- tryCatch(read_five9_snapshots(36), error = function(e) {
         message(paste("[GRID] Five9 error:", e$message))
         data.frame()
       })
+      message(paste("[GRID] Five9 rows:", nrow(five)))
       all_snaps <- bind_rows(aws, five)
       message(paste("[GRID] Total snapshots:", nrow(all_snaps)))
 
@@ -95,14 +99,26 @@ interval_grid_server <- function(id, active_tab = reactive("live")) {
         all_snaps <- all_snaps %>% filter(platform == input$platform_filter)
       }
 
-      spans <- build_spans(all_snaps)
+      message("[GRID] Building spans...")
+      spans <- tryCatch(build_spans(all_snaps), error = function(e) {
+        message(paste("[GRID] build_spans error:", e$message))
+        data.frame()
+      })
+      message(paste("[GRID] Spans:", nrow(spans)))
       if (nrow(spans) == 0) return(list(grid = data.frame(), summary = data.frame()))
 
-      intervals <- spans_to_intervals(spans)
+      message("[GRID] Converting spans to intervals...")
+      intervals <- tryCatch(spans_to_intervals(spans), error = function(e) {
+        message(paste("[GRID] spans_to_intervals error:", e$message))
+        data.frame()
+      })
+      message(paste("[GRID] Intervals:", nrow(intervals)))
       if (nrow(intervals) == 0) return(list(grid = data.frame(), summary = data.frame()))
 
       # Filter to today (overnight rollovers already split by split_midnight)
+      message(paste("[GRID] Interval dates:", paste(unique(intervals$date), collapse=", ")))
       intervals <- intervals %>% filter(date == today)
+      message(paste("[GRID] Today's intervals:", nrow(intervals)))
       if (nrow(intervals) == 0) return(list(grid = data.frame(), summary = data.frame()))
 
       state_cols <- setdiff(names(intervals), c("agent_email", "platform", "date", "interval"))

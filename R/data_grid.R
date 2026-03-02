@@ -28,7 +28,8 @@ split_midnight <- function(df, date_col = "date") {
 # ── Proportional time allocation to grid slots ───────────────
 allocate_to_grid <- function(df) {
   grid <- make_grid()
-  df %>%
+  message(paste("[GRID] allocate_to_grid: input rows =", nrow(df), "x 96 grid slots"))
+  result <- df %>%
     crossing(grid) %>%
     filter(start_min < slot_end_min, end_min > slot_min) %>%
     mutate(
@@ -37,6 +38,8 @@ allocate_to_grid <- function(df) {
       secs       = round((clip_end - clip_start) * 60)
     ) %>%
     filter(secs > 0)
+  message(paste("[GRID] allocate_to_grid: output rows =", nrow(result)))
+  result
 }
 
 # ── Detect state transitions from consecutive snapshots ──────
