@@ -69,55 +69,62 @@ interval_grid_server <- function(id) {
       auto_timer()
       input$load_btn
 
-      today <- Sys.Date()
+      tryCatch({
+        today <- Sys.Date()
 
-      # 36 hours back captures shifts that started yesterday evening
-      aws  <- tryCatch(read_aws_snapshots(36), error = function(e) data.frame())
-      five <- tryCatch(read_five9_snapshots(36), error = function(e) data.frame())
-      all_snaps <- bind_rows(aws, five)
+        aws  <- tryCatch(read_aws_snapshots(36), error = function(e) {
+          message(paste("Grid AWS error:", e$message))
+          data.frame()
+        })
+        five <- tryCatch(read_five9_snapshots(36), error = function(e) {
+          message(paste("Grid Five9 error:", e$message))
+          data.frame()
+        })
+        all_snaps <- bind_rows(aws, five)
 
-      if (nrow(all_snaps) == 0) {
-        cached_grid(list(grid = data.frame(), summary = data.frame()))
-        first_load(FALSE)
-        return()
-      }
+        if (nrow(all_snaps) == 0) {
+          cached_grid(list(grid = data.frame(), summary = data.frame()))
+          first_load(FALSE)
+          return()
+        }
 
-      if (!is.null(input$platform_filter) && input$platform_filter != "All") {
-        all_snaps <- all_snaps %>% filter(platform == input$platform_filter)
-      }
+        if (!is.null(input$platform_filter) && input$platform_filter != "All") {
+          all_snaps <- all_snaps %>% filter(platform == input$platform_filter)
+        }
 
-      spans <- build_spans(all_snaps)
-      if (nrow(spans) == 0) {
-        cached_grid(list(grid = data.frame(), summary = data.frame()))
-        first_load(FALSE)
-        return()
-      }
+        spans <- build_spans(all_snaps)
+        if (nrow(spans) == 0) {
+          cached_grid(list(grid = data.frame(), summary = data.frame()))
+          first_load(FALSE)
+          return()
+        }
 
-      # spans_to_intervals handles split_midnight — overnight spans
-      # get their post-midnight portion assigned to today
-      intervals <- spans_to_intervals(spans)
-      if (nrow(intervals) == 0) {
-        cached_grid(list(grid = data.frame(), summary = data.frame()))
-        first_load(FALSE)
-        return()
-      }
+        intervals <- spans_to_intervals(spans)
+        if (nrow(intervals) == 0) {
+          cached_grid(list(grid = data.frame(), summary = data.frame()))
+          first_load(FALSE)
+          return()
+        }
 
-      # Filter to today only (overnight rollovers already split by split_midnight)
-      intervals <- intervals %>% filter(date == today)
+        # Filter to today (overnight rollovers already split by split_midnight)
+        intervals <- intervals %>% filter(date == today)
 
-      if (nrow(intervals) == 0) {
-        cached_grid(list(grid = data.frame(), summary = data.frame()))
-        first_load(FALSE)
-        return()
-      }
+        if (nrow(intervals) == 0) {
+          cached_grid(list(grid = data.frame(), summary = data.frame()))
+          first_load(FALSE)
+          return()
+        }
 
-      state_cols <- setdiff(names(intervals), c("agent_email", "platform", "date", "interval"))
-      summary_df <- intervals %>%
-        group_by(interval) %>%
-        summarise(across(all_of(state_cols), ~ sum(. > 0)), .groups = "drop") %>%
-        arrange(interval)
+        state_cols <- setdiff(names(intervals), c("agent_email", "platform", "date", "interval"))
+        summary_df <- intervals %>%
+          group_by(interval) %>%
+          summarise(across(all_of(state_cols), ~ sum(. > 0)), .groups = "drop") %>%
+          arrange(interval)
 
-      cached_grid(list(grid = intervals, summary = summary_df))
+        cached_grid(list(grid = intervals, summary = summary_df))
+      }, error = function(e) {
+        message(paste("Grid observe error:", e$message))
+      })
       first_load(FALSE)
     })
 

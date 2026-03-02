@@ -194,15 +194,25 @@ live_status_server <- function(id) {
       auto_timer()
       input$refresh_btn
 
-      aws  <- tryCatch(read_latest_aws(), error = function(e) data.frame())
-      five <- tryCatch(read_latest_five9(), error = function(e) data.frame())
+      tryCatch({
+        aws  <- tryCatch(read_latest_aws(), error = function(e) {
+          message(paste("AWS read error:", e$message))
+          data.frame()
+        })
+        five <- tryCatch(read_latest_five9(), error = function(e) {
+          message(paste("Five9 read error:", e$message))
+          data.frame()
+        })
 
-      df <- bind_rows(aws, five)
-      if (nrow(df) > 0) {
-        df <- df %>% mutate(duration_fmt = fmt_duration(status_duration))
-      }
+        df <- bind_rows(aws, five)
+        if (nrow(df) > 0) {
+          df <- df %>% mutate(duration_fmt = fmt_duration(status_duration))
+        }
 
-      cached_data(df)
+        cached_data(df)
+      }, error = function(e) {
+        message(paste("Live status observe error:", e$message))
+      })
       first_load(FALSE)
     })
 
