@@ -1,25 +1,48 @@
 # ── Tab 1: Live Agent Status ──────────────────────────────────
 # Shows all currently logged-in agents across AWS Connect and Five9.
+# Status cards at top, agent table below.
 
 library(shiny)
 library(bs4Dash)
 library(reactable)
 library(dplyr)
 library(lubridate)
-library(jsonlite)
 
 source("R/data_supabase.R")
 
 # ── Status color mapping ─────────────────────────────────────
-status_color <- function(status) {
-  case_when(
-    status %in% c("Available", "Ready")       ~ "#28a745",
-    status %in% c("On Call", "On call")        ~ "#007bff",
-    status == "ACW"                            ~ "#ffc107",
-    status %in% c("Break", "Lunch")            ~ "#fd7e14",
-    status %in% c("Not Ready", "Offline")      ~ "#dc3545",
-    TRUE                                       ~ "#6c757d"
-  )
+STATUS_COLORS <- list(
+  Available = "#28a745", Ready = "#28a745",
+  `On Call` = "#007bff", `On call` = "#007bff",
+  ACW = "#ffc107", `After Call Work` = "#ffc107",
+
+  Break = "#fd7e14", Lunch = "#fd7e14",
+  `Not Ready` = "#dc3545", Offline = "#dc3545"
+)
+
+STATUS_ICONS <- list(
+  Available = "check-circle", Ready = "check-circle",
+  `On Call` = "phone", `On call` = "phone",
+  ACW = "clipboard", `After Call Work` = "clipboard",
+  Break = "mug-hot", Lunch = "utensils",
+  `Not Ready` = "times-circle", Offline = "times-circle"
+)
+
+get_status_color <- function(status) {
+  if (status %in% names(STATUS_COLORS)) STATUS_COLORS[[status]] else "#6c757d"
+}
+
+get_status_icon <- function(status) {
+  if (status %in% names(STATUS_ICONS)) STATUS_ICONS[[status]] else "question-circle"
+}
+
+# ── Format duration as hh:mm:ss ──────────────────────────────
+fmt_duration <- function(secs) {
+  secs <- as.integer(secs)
+  hrs <- secs %/% 3600
+  mins <- (secs %% 3600) %/% 60
+  s <- secs %% 60
+  sprintf("%02d:%02d:%02d", hrs, mins, s)
 }
 
 # ── UI ───────────────────────────────────────────────────────
@@ -39,6 +62,11 @@ live_status_ui <- function(id) {
         textOutput(ns("last_updated"), inline = TRUE)
       ))
     ),
+    # Status summary cards
+    fluidRow(
+      uiOutput(ns("status_cards"))
+    ),
+    # Agent table
     fluidRow(
       column(12,
         bs4Card(
@@ -49,11 +77,6 @@ live_status_ui <- function(id) {
           reactableOutput(ns("agent_table"))
         )
       )
-    ),
-    fluidRow(
-      column(4, bs4ValueBoxOutput(ns("total_agents"), width = 12)),
-      column(4, bs4ValueBoxOutput(ns("available_agents"), width = 12)),
-      column(4, bs4ValueBoxOutput(ns("on_call_agents"), width = 12))
     )
   )
 }
@@ -69,7 +92,7 @@ live_status_server <- function(id) {
     # Reactive data: read latest snapshots from both platforms
     live_data <- reactive({
       auto_timer()
-      input$refresh_btn  # also refresh on button click
+      input$refresh_btn
 
       aws  <- tryCatch(read_latest_aws(), error = function(e) data.frame())
       five <- tryCatch(read_latest_five9(), error = function(e) data.frame())
@@ -78,23 +101,7 @@ live_status_server <- function(id) {
       if (nrow(df) == 0) return(data.frame())
 
       df %>%
-        mutate(
-          duration_fmt = {
-            dur <- as.integer(status_duration)
-            sprintf("%02d:%02d", dur %/% 60, dur %% 60)
-          },
-          contact_state = sapply(contacts, function(c) {
-            if (is.na(c) || c == "" || c == "null") return("")
-            parsed <- tryCatch(fromJSON(c, simplifyVector = FALSE), error = function(e) list())
-            if (length(parsed) == 0) return("")
-            paste(sapply(parsed, function(x) {
-              st <- if (!is.null(x[["state"]])) x[["state"]] else x[["AgentContactState"]]
-              ch <- if (!is.null(x[["channel"]])) x[["channel"]] else x[["Channel"]]
-              if (is.null(st)) return("")
-              paste0(st, if (!is.null(ch)) paste0(" (", ch, ")") else "")
-            }), collapse = ", ")
-          })
-        )
+        mutate(duration_fmt = fmt_duration(status_duration))
     })
 
     # Update filter choices when data changes
@@ -128,6 +135,61 @@ live_status_server <- function(id) {
       df
     })
 
+    # Status summary cards — one card per status
+    output$status_cards <- renderUI({
+      df <- filtered_data()
+      if (nrow(df) == 0) return(NULL)
+
+      counts <- df %>%
+        count(status_name, name = "n") %>%
+        arrange(desc(n))
+
+      total <- nrow(df)
+
+      # Total card first
+      cards <- list(
+        column(2,
+          bs4ValueBox(
+            value = total,
+            subtitle = "Total",
+            icon = icon("users"),
+            color = "lightblue",
+            width = 12
+          )
+        )
+      )
+
+      # One card per status
+      for (i in seq_len(nrow(counts))) {
+        status <- counts$status_name[i]
+        n <- counts$n[i]
+        color_hex <- get_status_color(status)
+        ico <- get_status_icon(status)
+
+        # Map hex to bs4Dash color names
+        bs4_color <- switch(color_hex,
+          "#28a745" = "success",
+          "#007bff" = "primary",
+          "#ffc107" = "warning",
+          "#fd7e14" = "orange",
+          "#dc3545" = "danger",
+          "secondary"
+        )
+
+        cards[[length(cards) + 1]] <- column(2,
+          bs4ValueBox(
+            value = n,
+            subtitle = status,
+            icon = icon(ico),
+            color = bs4_color,
+            width = 12
+          )
+        )
+      }
+
+      do.call(tagList, cards)
+    })
+
     # Agent table
     output$agent_table <- renderReactable({
       df <- filtered_data()
@@ -143,8 +205,7 @@ live_status_server <- function(id) {
           Platform = platform,
           Status = status_name,
           Duration = duration_fmt,
-          `Routing Profile` = routing_profile,
-          `Contact State` = contact_state
+          `Routing Profile` = routing_profile
         )
 
       reactable(
@@ -156,7 +217,7 @@ live_status_server <- function(id) {
         columns = list(
           Status = colDef(
             cell = function(value) {
-              color <- status_color(value)
+              color <- get_status_color(value)
               div(
                 style = paste0(
                   "display: inline-block; padding: 2px 8px; border-radius: 4px; ",
@@ -167,28 +228,9 @@ live_status_server <- function(id) {
             }
           ),
           Duration = colDef(align = "right"),
-          `Routing Profile` = colDef(na = "-"),
-          `Contact State` = colDef(na = "")
+          `Routing Profile` = colDef(na = "-")
         )
       )
-    })
-
-    # Value boxes
-    output$total_agents <- renderbs4ValueBox({
-      n <- nrow(filtered_data())
-      bs4ValueBox(value = n, subtitle = "Total Agents", icon = icon("users"), color = "info")
-    })
-
-    output$available_agents <- renderbs4ValueBox({
-      df <- filtered_data()
-      n <- if (nrow(df) > 0) sum(df$status_name %in% c("Available", "Ready")) else 0
-      bs4ValueBox(value = n, subtitle = "Available", icon = icon("check-circle"), color = "success")
-    })
-
-    output$on_call_agents <- renderbs4ValueBox({
-      df <- filtered_data()
-      n <- if (nrow(df) > 0) sum(df$status_name %in% c("On Call", "On call")) else 0
-      bs4ValueBox(value = n, subtitle = "On Call", icon = icon("phone"), color = "primary")
     })
 
     # Last updated timestamp
