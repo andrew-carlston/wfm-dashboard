@@ -56,23 +56,38 @@ interval_grid_ui <- function(id) {
 }
 
 # ── Server ───────────────────────────────────────────────────
-interval_grid_server <- function(id) {
+interval_grid_server <- function(id, active_tab = reactive("live")) {
   moduleServer(id, function(input, output, session) {
     ns <- session$ns
 
+    # Track if tab has been visited
+    tab_visited <- reactiveVal(FALSE)
+    observeEvent(active_tab(), {
+      if (active_tab() == "grid") tab_visited(TRUE)
+    })
+
     auto_timer <- reactiveTimer(60000)
 
-    # Simple reactive — fetch today's data
+    # Only start loading after user visits this tab
     grid_data <- reactive({
+      req(tab_visited())
       auto_timer()
       input$load_btn
 
       today <- Sys.Date()
 
+      message("[GRID] Fetching snapshots (36hr)...")
       # 36 hours back captures overnight shifts
-      aws  <- tryCatch(read_aws_snapshots(36), error = function(e) data.frame())
-      five <- tryCatch(read_five9_snapshots(36), error = function(e) data.frame())
+      aws  <- tryCatch(read_aws_snapshots(36), error = function(e) {
+        message(paste("[GRID] AWS error:", e$message))
+        data.frame()
+      })
+      five <- tryCatch(read_five9_snapshots(36), error = function(e) {
+        message(paste("[GRID] Five9 error:", e$message))
+        data.frame()
+      })
       all_snaps <- bind_rows(aws, five)
+      message(paste("[GRID] Total snapshots:", nrow(all_snaps)))
 
       if (nrow(all_snaps) == 0) return(list(grid = data.frame(), summary = data.frame()))
 

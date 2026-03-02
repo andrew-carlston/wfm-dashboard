@@ -55,7 +55,7 @@ ui <- dashboardPage(
 # ── Server ───────────────────────────────────────────────────
 server <- function(input, output, session) {
   live_status_server("live_status")
-  interval_grid_server("interval_grid")
+  interval_grid_server("interval_grid", active_tab = reactive(input$tabs))
   adherence_server("adherence")
 }
 

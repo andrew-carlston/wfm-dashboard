@@ -170,10 +170,26 @@ live_status_server <- function(id) {
       auto_timer()
       input$refresh_btn
 
-      aws  <- tryCatch(read_latest_aws(), error = function(e) data.frame())
-      five <- tryCatch(read_latest_five9(), error = function(e) data.frame())
+      message("[LIVE] Fetching latest snapshots...")
+      aws  <- tryCatch({
+        res <- read_latest_aws()
+        message(paste("[LIVE] AWS rows:", nrow(res)))
+        res
+      }, error = function(e) {
+        message(paste("[LIVE] AWS error:", e$message))
+        data.frame()
+      })
+      five <- tryCatch({
+        res <- read_latest_five9()
+        message(paste("[LIVE] Five9 rows:", nrow(res)))
+        res
+      }, error = function(e) {
+        message(paste("[LIVE] Five9 error:", e$message))
+        data.frame()
+      })
 
       df <- bind_rows(aws, five)
+      message(paste("[LIVE] Total rows:", nrow(df)))
       if (nrow(df) == 0) return(data.frame())
 
       df %>% mutate(duration_fmt = fmt_duration(status_duration))

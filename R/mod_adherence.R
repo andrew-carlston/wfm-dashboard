@@ -266,15 +266,10 @@ adherence_server <- function(id) {
         data.frame()
       })
       schedule_data(sched)
-    }, ignoreNULL = FALSE)
+    })
 
-    # Load on first visit
-    observe({
-      if (nrow(schedule_data()) == 0) {
-        sched <- tryCatch(read_schedule(), error = function(e) data.frame())
-        schedule_data(sched)
-      }
-    }) %>% bindEvent(TRUE, once = TRUE)
+    # Don't auto-load schedule — only load when user clicks Refresh Schedule or Load Report
+    # (Google Sheets auth isn't configured yet)
 
     # Selected agent for drill-down
     selected_agent <- reactiveVal(NULL)
@@ -337,10 +332,11 @@ adherence_server <- function(id) {
         points = points,
         intervals = intervals
       )
-    }, ignoreNULL = FALSE)
+    })
 
     # Adherence summary table
     output$adherence_table <- renderReactable({
+      req(input$load_btn)
       adh <- report_data()$adherence
       if (nrow(adh) == 0) {
         return(reactable(data.frame(Message = "No adherence data. Load schedule + snapshots."),
@@ -401,6 +397,7 @@ adherence_server <- function(id) {
 
     # Points table
     output$points_table <- renderReactable({
+      req(input$load_btn)
       pts <- report_data()$points
       if (nrow(pts) == 0) {
         return(reactable(data.frame(Message = "No points data."),
@@ -436,6 +433,7 @@ adherence_server <- function(id) {
 
     # Infractions log
     output$infractions_table <- renderReactable({
+      req(input$load_btn)
       inf <- report_data()$infractions
       if (nrow(inf) == 0) {
         return(reactable(data.frame(Message = "No infractions detected."),
@@ -458,6 +456,7 @@ adherence_server <- function(id) {
 
     # Agent detail drill-down
     output$detail_table <- renderReactable({
+      req(input$load_btn)
       agent <- selected_agent()
       if (is.null(agent)) {
         return(reactable(data.frame(Message = "Select an agent from the summary table."),
