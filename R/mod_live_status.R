@@ -1,6 +1,5 @@
 # ── Tab 1: Live Agent Status ──────────────────────────────────
-# Shows all currently logged-in agents across AWS Connect and Five9.
-# Status summary cards at top, agent table below.
+# One card per status, each containing a table of agents in that state.
 
 library(shiny)
 library(bs4Dash)
@@ -12,22 +11,21 @@ source("R/data_supabase.R")
 
 # ── Status config ────────────────────────────────────────────
 STATUS_CONFIG <- list(
-  Total      = list(bg = "#343a40", icon = "fa-users"),
-  Available  = list(bg = "#28a745", icon = "fa-check-circle"),
-  `On Call`  = list(bg = "#007bff", icon = "fa-phone-alt"),
-  ACW        = list(bg = "#ffc107", icon = "fa-clipboard"),
-  Break      = list(bg = "#fd7e14", icon = "fa-mug-hot"),
-  Lunch      = list(bg = "#e83e8c", icon = "fa-utensils"),
-  `Not Ready` = list(bg = "#dc3545", icon = "fa-times-circle"),
-  Offline    = list(bg = "#dc3545", icon = "fa-power-off"),
-  Training   = list(bg = "#6f42c1", icon = "fa-graduation-cap"),
-  Meeting    = list(bg = "#20c997", icon = "fa-calendar"),
-  Coaching   = list(bg = "#17a2b8", icon = "fa-chalkboard-teacher")
+  Available   = list(bg = "#28a745", icon = "fa-check-circle",   order = 1),
+  `On Call`   = list(bg = "#007bff", icon = "fa-phone-alt",      order = 2),
+  ACW         = list(bg = "#ffc107", icon = "fa-clipboard",      order = 3),
+  Break       = list(bg = "#fd7e14", icon = "fa-mug-hot",        order = 4),
+  Lunch       = list(bg = "#e83e8c", icon = "fa-utensils",       order = 5),
+  Training    = list(bg = "#6f42c1", icon = "fa-graduation-cap", order = 6),
+  Meeting     = list(bg = "#20c997", icon = "fa-calendar",       order = 7),
+  Coaching    = list(bg = "#17a2b8", icon = "fa-chalkboard-teacher", order = 8),
+  `Not Ready` = list(bg = "#dc3545", icon = "fa-times-circle",   order = 9),
+  Offline     = list(bg = "#6c757d", icon = "fa-power-off",      order = 10)
 )
 
 get_config <- function(status) {
   if (status %in% names(STATUS_CONFIG)) STATUS_CONFIG[[status]]
-  else list(bg = "#6c757d", icon = "fa-question-circle")
+  else list(bg = "#6c757d", icon = "fa-question-circle", order = 99)
 }
 
 # ── Format duration as hh:mm:ss ──────────────────────────────
@@ -39,55 +37,121 @@ fmt_duration <- function(secs) {
   sprintf("%02d:%02d:%02d", hrs, mins, s)
 }
 
-# ── Build a single status card (raw HTML) ────────────────────
-make_status_card <- function(label, count, bg, icon_class) {
-  tags$div(
-    style = paste0(
-      "flex: 1 1 0; min-width: 120px; max-width: 180px; ",
-      "background: ", bg, "; color: #fff; ",
-      "border-radius: 8px; padding: 14px 16px; margin: 4px; ",
-      "text-align: center; box-shadow: 0 2px 6px rgba(0,0,0,0.15);"
-    ),
-    tags$div(
-      style = "font-size: 28px; font-weight: 700; line-height: 1.1;",
-      tags$i(class = paste("fas", icon_class), style = "margin-right: 6px; font-size: 20px; opacity: 0.8;"),
-      as.character(count)
-    ),
-    tags$div(
-      style = "font-size: 12px; font-weight: 500; margin-top: 4px; text-transform: uppercase; letter-spacing: 0.5px; opacity: 0.9;",
-      label
-    )
-  )
-}
-
 # ── UI ───────────────────────────────────────────────────────
 live_status_ui <- function(id) {
   ns <- NS(id)
   tagList(
-    # Custom CSS
-    tags$style(HTML("
-      .status-cards-row {
+    tags$head(tags$style(HTML("
+      .status-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(380px, 1fr));
+        gap: 16px;
+        padding: 0 4px;
+      }
+      .status-card {
+        border-radius: 8px;
+        overflow: hidden;
+        box-shadow: 0 2px 8px rgba(0,0,0,0.12);
+        background: #fff;
+      }
+      .status-card-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 10px 16px;
+        color: #fff;
+        font-weight: 600;
+      }
+      .status-card-header .status-label {
+        font-size: 15px;
+        display: flex;
+        align-items: center;
+        gap: 8px;
+      }
+      .status-card-header .status-count {
+        font-size: 22px;
+        font-weight: 700;
+      }
+      .status-card-body {
+        max-height: 280px;
+        overflow-y: auto;
+      }
+      .status-card-body table {
+        width: 100%;
+        margin: 0;
+        font-size: 13px;
+      }
+      .status-card-body table th {
+        position: sticky;
+        top: 0;
+        background: #f8f9fa;
+        padding: 6px 12px;
+        font-weight: 600;
+        font-size: 11px;
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+        color: #666;
+        border-bottom: 2px solid #dee2e6;
+      }
+      .status-card-body table td {
+        padding: 5px 12px;
+        border-bottom: 1px solid #f0f0f0;
+        white-space: nowrap;
+      }
+      .status-card-body table tr:hover {
+        background: #f8f9fa;
+      }
+      .status-card-body table td.duration {
+        font-family: 'SF Mono', 'Consolas', 'Monaco', monospace;
+        text-align: right;
+        font-weight: 500;
+      }
+      .platform-badge {
+        display: inline-block;
+        padding: 1px 6px;
+        border-radius: 3px;
+        font-size: 10px;
+        font-weight: 600;
+        color: #fff;
+      }
+      .platform-aws { background: #232f3e; }
+      .platform-five9 { background: #ff6a00; }
+      .summary-bar {
         display: flex;
         flex-wrap: wrap;
         gap: 0;
         margin-bottom: 16px;
+        background: #fff;
+        border-radius: 8px;
+        box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+        overflow: hidden;
       }
-      .loading-overlay {
-        position: relative;
-        min-height: 200px;
+      .summary-chip {
+        flex: 1 1 0;
+        min-width: 80px;
+        text-align: center;
+        padding: 12px 8px;
+        color: #fff;
+        border-right: 1px solid rgba(255,255,255,0.15);
       }
+      .summary-chip:last-child { border-right: none; }
+      .summary-chip .chip-count { font-size: 24px; font-weight: 700; line-height: 1; }
+      .summary-chip .chip-label { font-size: 10px; text-transform: uppercase; letter-spacing: 0.5px; opacity: 0.9; margin-top: 2px; }
       .spinner-wrap {
         display: flex;
         justify-content: center;
         align-items: center;
-        padding: 60px 0;
+        padding: 80px 0;
+        flex-direction: column;
+        gap: 12px;
+        color: #999;
       }
       .spinner-wrap .spinner-border {
         width: 3rem;
         height: 3rem;
         border-width: 0.3em;
       }
-    ")),
+    "))),
     fluidRow(
       column(3, selectInput(ns("platform_filter"), "Platform",
         choices = c("All", "AWS", "Five9"), selected = "All")),
@@ -101,18 +165,10 @@ live_status_ui <- function(id) {
         textOutput(ns("last_updated"), inline = TRUE)
       ))
     ),
-    # Status summary cards
-    div(class = "status-cards-row",
-      uiOutput(ns("status_cards"))
-    ),
-    # Agent table
-    bs4Card(
-      title = "Agent Details",
-      status = "primary",
-      width = 12,
-      solidHeader = TRUE,
-      uiOutput(ns("agent_table_wrap"))
-    )
+    # Summary bar
+    uiOutput(ns("summary_bar")),
+    # Status cards grid
+    uiOutput(ns("status_cards"))
   )
 }
 
@@ -171,109 +227,109 @@ live_status_server <- function(id) {
       df
     })
 
-    # Status cards
-    output$status_cards <- renderUI({
+    # Summary bar
+    output$summary_bar <- renderUI({
+      if (is_loading()) return(NULL)
       df <- filtered_data()
-
-      if (is_loading()) {
-        return(div(class = "spinner-wrap",
-          div(class = "spinner-border text-primary", role = "status",
-            span(class = "sr-only", "Loading...")
-          )
-        ))
-      }
-
-      if (nrow(df) == 0) {
-        return(div(style = "padding: 20px; text-align: center; color: #999;",
-          "No agents online"))
-      }
+      if (nrow(df) == 0) return(NULL)
 
       counts <- df %>%
         count(status_name, name = "n") %>%
-        arrange(desc(n))
+        mutate(order = sapply(status_name, function(s) get_config(s)$order)) %>%
+        arrange(order)
 
-      # Build card list: Total first, then each status
-      total_cfg <- get_config("Total")
-      cards <- list(make_status_card("Total", nrow(df), total_cfg$bg, total_cfg$icon))
+      chips <- list(
+        tags$div(class = "summary-chip", style = "background: #343a40;",
+          tags$div(class = "chip-count", nrow(df)),
+          tags$div(class = "chip-label", "Total")
+        )
+      )
 
       for (i in seq_len(nrow(counts))) {
         cfg <- get_config(counts$status_name[i])
-        cards[[length(cards) + 1]] <- make_status_card(
-          counts$status_name[i], counts$n[i], cfg$bg, cfg$icon
+        chips[[length(chips) + 1]] <- tags$div(
+          class = "summary-chip",
+          style = paste0("background: ", cfg$bg, ";"),
+          tags$div(class = "chip-count", counts$n[i]),
+          tags$div(class = "chip-label", counts$status_name[i])
         )
       }
 
-      do.call(tagList, cards)
+      tags$div(class = "summary-bar", do.call(tagList, chips))
     })
 
-    # Agent table with loading state
-    output$agent_table_wrap <- renderUI({
+    # Status cards — one card per status with agent table inside
+    output$status_cards <- renderUI({
       if (is_loading()) {
-        return(div(class = "spinner-wrap",
-          div(class = "spinner-border text-primary", role = "status",
-            span(class = "sr-only", "Loading...")
-          )
+        return(tags$div(class = "spinner-wrap",
+          tags$div(class = "spinner-border text-primary", role = "status",
+            tags$span(class = "sr-only", "Loading...")),
+          tags$div("Loading agent data...")
         ))
       }
-      reactableOutput(ns("agent_table"))
-    })
 
-    output$agent_table <- renderReactable({
       df <- filtered_data()
       if (nrow(df) == 0) {
-        return(reactable(data.frame(Message = "No agents found"), columns = list(
-          Message = colDef(align = "center")
-        )))
+        return(tags$div(class = "spinner-wrap",
+          tags$i(class = "fas fa-users", style = "font-size: 40px;"),
+          tags$div("No agents online")
+        ))
       }
 
-      display_df <- df %>%
-        select(
-          `Agent Email` = agent_email,
-          Platform = platform,
-          Status = status_name,
-          Duration = duration_fmt,
-          `Routing Profile` = routing_profile
-        )
+      # Split by status, ordered
+      df <- df %>%
+        mutate(status_order = sapply(status_name, function(s) get_config(s)$order)) %>%
+        arrange(status_order, agent_email)
 
-      reactable(
-        display_df,
-        searchable = TRUE,
-        striped = TRUE,
-        highlight = TRUE,
-        defaultPageSize = 50,
-        defaultSorted = list(Status = "asc"),
-        columns = list(
-          `Agent Email` = colDef(minWidth = 220),
-          Platform = colDef(width = 90, align = "center",
-            cell = function(value) {
-              bg <- if (value == "AWS") "#232f3e" else "#ff6a00"
-              div(
-                style = paste0(
-                  "display: inline-block; padding: 2px 8px; border-radius: 4px; ",
-                  "background: ", bg, "; color: white; font-size: 11px; font-weight: 600;"
-                ),
-                value
-              )
-            }
+      statuses <- df %>%
+        group_by(status_name) %>%
+        summarise(n = n(), order = first(status_order), .groups = "drop") %>%
+        arrange(order)
+
+      cards <- lapply(seq_len(nrow(statuses)), function(i) {
+        status <- statuses$status_name[i]
+        count <- statuses$n[i]
+        cfg <- get_config(status)
+
+        agents <- df %>%
+          filter(status_name == status) %>%
+          arrange(desc(status_duration))
+
+        # Build table rows
+        rows <- lapply(seq_len(nrow(agents)), function(j) {
+          a <- agents[j, ]
+          platform_class <- if (a$platform == "AWS") "platform-aws" else "platform-five9"
+          tags$tr(
+            tags$td(a$agent_email),
+            tags$td(tags$span(class = paste("platform-badge", platform_class), a$platform)),
+            tags$td(class = "duration", a$duration_fmt),
+            tags$td(if (!is.na(a$routing_profile)) a$routing_profile else "-")
+          )
+        })
+
+        tags$div(class = "status-card",
+          tags$div(class = "status-card-header", style = paste0("background: ", cfg$bg, ";"),
+            tags$span(class = "status-label",
+              tags$i(class = paste("fas", cfg$icon)),
+              status
+            ),
+            tags$span(class = "status-count", count)
           ),
-          Status = colDef(width = 130,
-            cell = function(value) {
-              cfg <- get_config(value)
-              div(
-                style = paste0(
-                  "display: inline-block; padding: 3px 10px; border-radius: 4px; ",
-                  "background: ", cfg$bg, "; color: white; font-weight: 600; font-size: 12px;"
-                ),
-                value
-              )
-            }
-          ),
-          Duration = colDef(width = 110, align = "right",
-            style = list(fontFamily = "monospace", fontWeight = "bold")
-          ),
-          `Routing Profile` = colDef(minWidth = 150, na = "-")
+          tags$div(class = "status-card-body",
+            tags$table(
+              tags$thead(tags$tr(
+                tags$th("Agent"),
+                tags$th("Platform"),
+                tags$th(style = "text-align: right;", "Duration"),
+                tags$th("Routing Profile")
+              )),
+              tags$tbody(rows)
+            )
+          )
         )
-      )
+      })
+
+      tags$div(class = "status-grid", do.call(tagList, cards))
     })
 
     # Last updated
