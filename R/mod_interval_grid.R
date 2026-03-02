@@ -1,5 +1,6 @@
 # ── Tab 2: 15-Min Interval Grid ───────────────────────────────
-# Time allocation per agent per 15-min slot with heatmap coloring.
+# Today's time allocation per agent per 15-min slot.
+# Auto-refreshes every 60s. Handles overnight shifts.
 
 library(shiny)
 library(bs4Dash)
@@ -16,12 +17,11 @@ interval_grid_ui <- function(id) {
   ns <- NS(id)
   tagList(
     fluidRow(
-      column(3, dateInput(ns("selected_date"), "Date", value = Sys.Date())),
-      column(3, selectInput(ns("platform_filter"), "Platform",
+      column(4, selectInput(ns("platform_filter"), "Platform",
         choices = c("All", "AWS", "Five9"), selected = "All")),
-      column(3, selectInput(ns("agent_filter"), "Agent",
+      column(4, selectInput(ns("agent_filter"), "Agent",
         choices = c("All"), selected = "All")),
-      column(3, div(style = "padding-top: 25px;",
+      column(4, div(style = "padding-top: 25px;",
         actionButton(ns("load_btn"), "Refresh Now", icon = icon("sync"),
                      class = "btn-primary btn-sm"),
         textOutput(ns("last_updated"), inline = TRUE)
@@ -30,12 +30,12 @@ interval_grid_ui <- function(id) {
     fluidRow(
       column(12,
         bs4Card(
-          title = "15-Minute Interval Grid",
+          title = paste("15-Minute Interval Grid —", format(Sys.Date(), "%A, %B %d")),
           status = "primary",
           width = 12,
           solidHeader = TRUE,
           div(style = "overflow-x: auto;",
-            reactableOutput(ns("grid_table"))
+            uiOutput(ns("grid_wrap"))
           )
         )
       )
@@ -60,47 +60,56 @@ interval_grid_server <- function(id) {
   moduleServer(id, function(input, output, session) {
     ns <- session$ns
 
-    # Auto-refresh every 60 seconds
     auto_timer <- reactiveTimer(60000)
     cached_grid <- reactiveVal(list(grid = data.frame(), summary = data.frame()))
+    first_load <- reactiveVal(TRUE)
 
-    # Fetch data silently — cache last good result
+    # Fetch today's data — 36 hours back to capture overnight shifts
     observe({
       auto_timer()
       input$load_btn
-      selected <- input$selected_date
 
-      hours_back <- as.numeric(difftime(Sys.time(),
-        as.POSIXct(paste(selected, "00:00:00"), tz = "America/Chicago"),
-        units = "hours")) + 24
-      hours_back <- max(hours_back, 24)
+      today <- Sys.Date()
 
-      aws  <- tryCatch(read_aws_snapshots(hours_back), error = function(e) data.frame())
-      five <- tryCatch(read_five9_snapshots(hours_back), error = function(e) data.frame())
+      # 36 hours back captures shifts that started yesterday evening
+      aws  <- tryCatch(read_aws_snapshots(36), error = function(e) data.frame())
+      five <- tryCatch(read_five9_snapshots(36), error = function(e) data.frame())
       all_snaps <- bind_rows(aws, five)
 
       if (nrow(all_snaps) == 0) {
         cached_grid(list(grid = data.frame(), summary = data.frame()))
+        first_load(FALSE)
         return()
       }
 
-      if (input$platform_filter != "All") {
+      if (!is.null(input$platform_filter) && input$platform_filter != "All") {
         all_snaps <- all_snaps %>% filter(platform == input$platform_filter)
       }
 
       spans <- build_spans(all_snaps)
       if (nrow(spans) == 0) {
         cached_grid(list(grid = data.frame(), summary = data.frame()))
+        first_load(FALSE)
         return()
       }
 
+      # spans_to_intervals handles split_midnight — overnight spans
+      # get their post-midnight portion assigned to today
       intervals <- spans_to_intervals(spans)
       if (nrow(intervals) == 0) {
         cached_grid(list(grid = data.frame(), summary = data.frame()))
+        first_load(FALSE)
         return()
       }
 
-      intervals <- intervals %>% filter(date == selected)
+      # Filter to today only (overnight rollovers already split by split_midnight)
+      intervals <- intervals %>% filter(date == today)
+
+      if (nrow(intervals) == 0) {
+        cached_grid(list(grid = data.frame(), summary = data.frame()))
+        first_load(FALSE)
+        return()
+      }
 
       state_cols <- setdiff(names(intervals), c("agent_email", "platform", "date", "interval"))
       summary_df <- intervals %>%
@@ -109,40 +118,44 @@ interval_grid_server <- function(id) {
         arrange(interval)
 
       cached_grid(list(grid = intervals, summary = summary_df))
+      first_load(FALSE)
     })
 
     grid_data <- reactive({ cached_grid() })
 
-    # Last updated timestamp
-    output$last_updated <- renderText({
-      auto_timer()
-      paste("Updated:", format(Sys.time(), "%H:%M:%S"))
-    })
-
-    # Update agent filter when data loads
+    # Update agent filter
     observeEvent(grid_data(), {
       df <- grid_data()$grid
       if (nrow(df) == 0) return()
       agents <- sort(unique(df$agent_email))
       updateSelectInput(session, "agent_filter",
-        choices = c("All", agents), selected = "All")
+        choices = c("All", agents), selected = input$agent_filter)
     })
 
-    # Grid table
+    # Grid table with loading state
+    output$grid_wrap <- renderUI({
+      if (first_load()) {
+        return(tags$div(
+          style = "display:flex; justify-content:center; align-items:center; padding:60px 0; flex-direction:column; gap:12px; color:#999;",
+          tags$div(class = "css-spinner"),
+          tags$div("Loading interval data...")
+        ))
+      }
+      reactableOutput(ns("grid_table"))
+    })
+
     output$grid_table <- renderReactable({
       gd <- grid_data()
       df <- gd$grid
       if (nrow(df) == 0) {
-        return(reactable(data.frame(Message = "No data for selected date."),
+        return(reactable(data.frame(Message = "No interval data for today."),
           columns = list(Message = colDef(align = "center"))))
       }
 
-      # Apply agent filter
       if (!is.null(input$agent_filter) && input$agent_filter != "All") {
         df <- df %>% filter(agent_email == input$agent_filter)
       }
 
-      # Convert seconds to minutes for display
       state_cols <- setdiff(names(df), c("agent_email", "platform", "date", "interval"))
 
       display_df <- df %>%
@@ -150,11 +163,10 @@ interval_grid_server <- function(id) {
         select(Agent = agent_email, Platform = platform, Interval = interval,
                all_of(state_cols))
 
-      # Build column defs with heatmap coloring
       col_defs <- list(
-        Agent = colDef(sticky = "left", style = list(fontWeight = "bold")),
-        Platform = colDef(width = 80),
-        Interval = colDef(width = 80)
+        Agent = colDef(sticky = "left", style = list(fontWeight = "bold"), minWidth = 200),
+        Platform = colDef(width = 80, align = "center"),
+        Interval = colDef(width = 80, style = list(fontFamily = "monospace"))
       )
 
       for (col in state_cols) {
@@ -194,15 +206,14 @@ interval_grid_server <- function(id) {
           columns = list(Message = colDef(align = "center"))))
       }
 
-      reactable(
-        df,
-        striped = TRUE,
-        compact = TRUE,
-        defaultPageSize = 96,
-        columns = list(
-          interval = colDef(name = "Interval", width = 80)
-        )
-      )
+      reactable(df, striped = TRUE, compact = TRUE, defaultPageSize = 96,
+        columns = list(interval = colDef(name = "Interval", width = 80)))
+    })
+
+    # Last updated
+    output$last_updated <- renderText({
+      auto_timer()
+      paste("Updated:", format(Sys.time(), "%H:%M:%S"))
     })
   })
 }
