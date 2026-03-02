@@ -30,7 +30,6 @@ ui <- dashboardPage(
     # Global: kill Shiny's recalculating gray overlay on all outputs
     tags$style(HTML("
       .recalculating { opacity: 1 !important; }
-      .shiny-output-error { visibility: hidden; }
     ")),
     tabItems(
       tabItem(
