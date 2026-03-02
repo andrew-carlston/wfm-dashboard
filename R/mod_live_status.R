@@ -178,27 +178,31 @@ live_status_server <- function(id) {
     ns <- session$ns
 
     auto_timer <- reactiveTimer(60000)
-    is_loading <- reactiveVal(TRUE)
+    first_load <- reactiveVal(TRUE)
 
-    # Reactive data
-    live_data <- reactive({
+    # Cache: holds last good dataset so UI never blanks during refresh
+    cached_data <- reactiveVal(data.frame())
+
+    # Fetch new data silently — update cache only when ready
+    observe({
       auto_timer()
       input$refresh_btn
-      is_loading(TRUE)
 
       aws  <- tryCatch(read_latest_aws(), error = function(e) data.frame())
       five <- tryCatch(read_latest_five9(), error = function(e) data.frame())
 
       df <- bind_rows(aws, five)
-      is_loading(FALSE)
-      if (nrow(df) == 0) return(data.frame())
+      if (nrow(df) > 0) {
+        df <- df %>% mutate(duration_fmt = fmt_duration(status_duration))
+      }
 
-      df %>% mutate(duration_fmt = fmt_duration(status_duration))
+      cached_data(df)
+      first_load(FALSE)
     })
 
     # Update filter choices
-    observeEvent(live_data(), {
-      df <- live_data()
+    observeEvent(cached_data(), {
+      df <- cached_data()
       if (nrow(df) == 0) return()
 
       statuses <- sort(unique(df$status_name))
@@ -210,9 +214,9 @@ live_status_server <- function(id) {
         choices = c("All", profiles), selected = input$routing_filter)
     })
 
-    # Filtered data
+    # Filtered data (reads from cache — always instant)
     filtered_data <- reactive({
-      df <- live_data()
+      df <- cached_data()
       if (nrow(df) == 0) return(data.frame())
 
       if (input$platform_filter != "All") {
@@ -229,7 +233,7 @@ live_status_server <- function(id) {
 
     # Summary bar
     output$summary_bar <- renderUI({
-      if (is_loading()) return(NULL)
+      if (first_load()) return(NULL)
       df <- filtered_data()
       if (nrow(df) == 0) return(NULL)
 
@@ -260,7 +264,7 @@ live_status_server <- function(id) {
 
     # Status cards — one card per status with agent table inside
     output$status_cards <- renderUI({
-      if (is_loading()) {
+      if (first_load()) {
         return(tags$div(class = "spinner-wrap",
           tags$div(class = "spinner-border text-primary", role = "status",
             tags$span(class = "sr-only", "Loading...")),

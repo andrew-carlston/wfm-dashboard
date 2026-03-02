@@ -62,50 +62,56 @@ interval_grid_server <- function(id) {
 
     # Auto-refresh every 60 seconds
     auto_timer <- reactiveTimer(60000)
+    cached_grid <- reactiveVal(list(grid = data.frame(), summary = data.frame()))
 
-    # Reactive: load and process snapshots for selected date
-    grid_data <- reactive({
+    # Fetch data silently — cache last good result
+    observe({
       auto_timer()
-      input$load_btn  # also refresh on manual click
+      input$load_btn
       selected <- input$selected_date
 
-      # Calculate hours_back from selected date to now
       hours_back <- as.numeric(difftime(Sys.time(),
         as.POSIXct(paste(selected, "00:00:00"), tz = "America/Chicago"),
         units = "hours")) + 24
       hours_back <- max(hours_back, 24)
 
-      # Read snapshots
       aws  <- tryCatch(read_aws_snapshots(hours_back), error = function(e) data.frame())
       five <- tryCatch(read_five9_snapshots(hours_back), error = function(e) data.frame())
       all_snaps <- bind_rows(aws, five)
 
-      if (nrow(all_snaps) == 0) return(list(grid = data.frame(), summary = data.frame()))
+      if (nrow(all_snaps) == 0) {
+        cached_grid(list(grid = data.frame(), summary = data.frame()))
+        return()
+      }
 
-      # Platform filter
       if (input$platform_filter != "All") {
         all_snaps <- all_snaps %>% filter(platform == input$platform_filter)
       }
 
-      # Build spans and convert to intervals
       spans <- build_spans(all_snaps)
-      if (nrow(spans) == 0) return(list(grid = data.frame(), summary = data.frame()))
+      if (nrow(spans) == 0) {
+        cached_grid(list(grid = data.frame(), summary = data.frame()))
+        return()
+      }
 
       intervals <- spans_to_intervals(spans)
-      if (nrow(intervals) == 0) return(list(grid = data.frame(), summary = data.frame()))
+      if (nrow(intervals) == 0) {
+        cached_grid(list(grid = data.frame(), summary = data.frame()))
+        return()
+      }
 
-      # Filter to selected date
       intervals <- intervals %>% filter(date == selected)
 
-      # Agent summary: counts per state per interval
       state_cols <- setdiff(names(intervals), c("agent_email", "platform", "date", "interval"))
       summary_df <- intervals %>%
         group_by(interval) %>%
         summarise(across(all_of(state_cols), ~ sum(. > 0)), .groups = "drop") %>%
         arrange(interval)
 
-      list(grid = intervals, summary = summary_df)
+      cached_grid(list(grid = intervals, summary = summary_df))
     })
+
+    grid_data <- reactive({ cached_grid() })
 
     # Last updated timestamp
     output$last_updated <- renderText({
