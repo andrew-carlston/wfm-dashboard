@@ -101,7 +101,7 @@ read_five9_snapshots <- function(hours_back = 48) {
       ),
       snapshot_ts = ymd_hms(snapshot_ts, tz = "UTC"),
       status_start_utc = ymd_hms(state_since_utc, tz = "UTC"),
-      status_duration = as.integer(state_duration),
+      status_duration = as.integer(state_duration) %/% 1000L,
       routing_profile = NA_character_,
       contacts = NA_character_
     ) %>%
@@ -177,7 +177,7 @@ read_latest_five9 <- function() {
     ),
     snapshot_ts = ymd_hms(snapshot_ts, tz = "UTC"),
     status_start_utc = ymd_hms(state_since_utc, tz = "UTC"),
-    status_duration = as.integer(state_duration),
+    status_duration = as.integer(state_duration) %/% 1000L,
     routing_profile = NA_character_,
     contacts = NA_character_
   ) %>%
