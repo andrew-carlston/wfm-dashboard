@@ -146,10 +146,16 @@ live_status_ui <- function(id) {
         gap: 12px;
         color: #999;
       }
-      .spinner-wrap .spinner-border {
-        width: 3rem;
-        height: 3rem;
-        border-width: 0.3em;
+      .css-spinner {
+        width: 40px;
+        height: 40px;
+        border: 4px solid #e9ecef;
+        border-top: 4px solid #007bff;
+        border-radius: 50%;
+        animation: spin 0.8s linear infinite;
+      }
+      @keyframes spin {
+        to { transform: rotate(360deg); }
       }
     "))),
     fluidRow(
@@ -266,8 +272,7 @@ live_status_server <- function(id) {
     output$status_cards <- renderUI({
       if (first_load()) {
         return(tags$div(class = "spinner-wrap",
-          tags$div(class = "spinner-border text-primary", role = "status",
-            tags$span(class = "sr-only", "Loading...")),
+          tags$div(class = "css-spinner"),
           tags$div("Loading agent data...")
         ))
       }
