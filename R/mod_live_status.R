@@ -1,6 +1,6 @@
 # ── Tab 1: Live Agent Status ──────────────────────────────────
 # Shows all currently logged-in agents across AWS Connect and Five9.
-# Status cards at top, agent table below.
+# Status summary cards at top, agent table below.
 
 library(shiny)
 library(bs4Dash)
@@ -10,30 +10,24 @@ library(lubridate)
 
 source("R/data_supabase.R")
 
-# ── Status color mapping ─────────────────────────────────────
-STATUS_COLORS <- list(
-  Available = "#28a745", Ready = "#28a745",
-  `On Call` = "#007bff", `On call` = "#007bff",
-  ACW = "#ffc107", `After Call Work` = "#ffc107",
-
-  Break = "#fd7e14", Lunch = "#fd7e14",
-  `Not Ready` = "#dc3545", Offline = "#dc3545"
+# ── Status config ────────────────────────────────────────────
+STATUS_CONFIG <- list(
+  Total      = list(bg = "#343a40", icon = "fa-users"),
+  Available  = list(bg = "#28a745", icon = "fa-check-circle"),
+  `On Call`  = list(bg = "#007bff", icon = "fa-phone-alt"),
+  ACW        = list(bg = "#ffc107", icon = "fa-clipboard"),
+  Break      = list(bg = "#fd7e14", icon = "fa-mug-hot"),
+  Lunch      = list(bg = "#e83e8c", icon = "fa-utensils"),
+  `Not Ready` = list(bg = "#dc3545", icon = "fa-times-circle"),
+  Offline    = list(bg = "#dc3545", icon = "fa-power-off"),
+  Training   = list(bg = "#6f42c1", icon = "fa-graduation-cap"),
+  Meeting    = list(bg = "#20c997", icon = "fa-calendar"),
+  Coaching   = list(bg = "#17a2b8", icon = "fa-chalkboard-teacher")
 )
 
-STATUS_ICONS <- list(
-  Available = "check-circle", Ready = "check-circle",
-  `On Call` = "phone", `On call` = "phone",
-  ACW = "clipboard", `After Call Work` = "clipboard",
-  Break = "mug-hot", Lunch = "utensils",
-  `Not Ready` = "times-circle", Offline = "times-circle"
-)
-
-get_status_color <- function(status) {
-  if (status %in% names(STATUS_COLORS)) STATUS_COLORS[[status]] else "#6c757d"
-}
-
-get_status_icon <- function(status) {
-  if (status %in% names(STATUS_ICONS)) STATUS_ICONS[[status]] else "question-circle"
+get_config <- function(status) {
+  if (status %in% names(STATUS_CONFIG)) STATUS_CONFIG[[status]]
+  else list(bg = "#6c757d", icon = "fa-question-circle")
 }
 
 # ── Format duration as hh:mm:ss ──────────────────────────────
@@ -45,10 +39,55 @@ fmt_duration <- function(secs) {
   sprintf("%02d:%02d:%02d", hrs, mins, s)
 }
 
+# ── Build a single status card (raw HTML) ────────────────────
+make_status_card <- function(label, count, bg, icon_class) {
+  tags$div(
+    style = paste0(
+      "flex: 1 1 0; min-width: 120px; max-width: 180px; ",
+      "background: ", bg, "; color: #fff; ",
+      "border-radius: 8px; padding: 14px 16px; margin: 4px; ",
+      "text-align: center; box-shadow: 0 2px 6px rgba(0,0,0,0.15);"
+    ),
+    tags$div(
+      style = "font-size: 28px; font-weight: 700; line-height: 1.1;",
+      tags$i(class = paste("fas", icon_class), style = "margin-right: 6px; font-size: 20px; opacity: 0.8;"),
+      as.character(count)
+    ),
+    tags$div(
+      style = "font-size: 12px; font-weight: 500; margin-top: 4px; text-transform: uppercase; letter-spacing: 0.5px; opacity: 0.9;",
+      label
+    )
+  )
+}
+
 # ── UI ───────────────────────────────────────────────────────
 live_status_ui <- function(id) {
   ns <- NS(id)
   tagList(
+    # Custom CSS
+    tags$style(HTML("
+      .status-cards-row {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0;
+        margin-bottom: 16px;
+      }
+      .loading-overlay {
+        position: relative;
+        min-height: 200px;
+      }
+      .spinner-wrap {
+        display: flex;
+        justify-content: center;
+        align-items: center;
+        padding: 60px 0;
+      }
+      .spinner-wrap .spinner-border {
+        width: 3rem;
+        height: 3rem;
+        border-width: 0.3em;
+      }
+    ")),
     fluidRow(
       column(3, selectInput(ns("platform_filter"), "Platform",
         choices = c("All", "AWS", "Five9"), selected = "All")),
@@ -63,20 +102,16 @@ live_status_ui <- function(id) {
       ))
     ),
     # Status summary cards
-    fluidRow(
+    div(class = "status-cards-row",
       uiOutput(ns("status_cards"))
     ),
     # Agent table
-    fluidRow(
-      column(12,
-        bs4Card(
-          title = "Live Agent Status",
-          status = "primary",
-          width = 12,
-          solidHeader = TRUE,
-          reactableOutput(ns("agent_table"))
-        )
-      )
+    bs4Card(
+      title = "Agent Details",
+      status = "primary",
+      width = 12,
+      solidHeader = TRUE,
+      uiOutput(ns("agent_table_wrap"))
     )
   )
 }
@@ -86,25 +121,26 @@ live_status_server <- function(id) {
   moduleServer(id, function(input, output, session) {
     ns <- session$ns
 
-    # Auto-refresh every 60 seconds
     auto_timer <- reactiveTimer(60000)
+    is_loading <- reactiveVal(TRUE)
 
-    # Reactive data: read latest snapshots from both platforms
+    # Reactive data
     live_data <- reactive({
       auto_timer()
       input$refresh_btn
+      is_loading(TRUE)
 
       aws  <- tryCatch(read_latest_aws(), error = function(e) data.frame())
       five <- tryCatch(read_latest_five9(), error = function(e) data.frame())
 
       df <- bind_rows(aws, five)
+      is_loading(FALSE)
       if (nrow(df) == 0) return(data.frame())
 
-      df %>%
-        mutate(duration_fmt = fmt_duration(status_duration))
+      df %>% mutate(duration_fmt = fmt_duration(status_duration))
     })
 
-    # Update filter choices when data changes
+    # Update filter choices
     observeEvent(live_data(), {
       df <- live_data()
       if (nrow(df) == 0) return()
@@ -135,62 +171,53 @@ live_status_server <- function(id) {
       df
     })
 
-    # Status summary cards — one card per status
+    # Status cards
     output$status_cards <- renderUI({
       df <- filtered_data()
-      if (nrow(df) == 0) return(NULL)
+
+      if (is_loading()) {
+        return(div(class = "spinner-wrap",
+          div(class = "spinner-border text-primary", role = "status",
+            span(class = "sr-only", "Loading...")
+          )
+        ))
+      }
+
+      if (nrow(df) == 0) {
+        return(div(style = "padding: 20px; text-align: center; color: #999;",
+          "No agents online"))
+      }
 
       counts <- df %>%
         count(status_name, name = "n") %>%
         arrange(desc(n))
 
-      total <- nrow(df)
+      # Build card list: Total first, then each status
+      total_cfg <- get_config("Total")
+      cards <- list(make_status_card("Total", nrow(df), total_cfg$bg, total_cfg$icon))
 
-      # Total card first
-      cards <- list(
-        column(2,
-          bs4ValueBox(
-            value = total,
-            subtitle = "Total",
-            icon = icon("users"),
-            color = "lightblue",
-            width = 12
-          )
-        )
-      )
-
-      # One card per status
       for (i in seq_len(nrow(counts))) {
-        status <- counts$status_name[i]
-        n <- counts$n[i]
-        color_hex <- get_status_color(status)
-        ico <- get_status_icon(status)
-
-        # Map hex to bs4Dash color names
-        bs4_color <- switch(color_hex,
-          "#28a745" = "success",
-          "#007bff" = "primary",
-          "#ffc107" = "warning",
-          "#fd7e14" = "orange",
-          "#dc3545" = "danger",
-          "secondary"
-        )
-
-        cards[[length(cards) + 1]] <- column(2,
-          bs4ValueBox(
-            value = n,
-            subtitle = status,
-            icon = icon(ico),
-            color = bs4_color,
-            width = 12
-          )
+        cfg <- get_config(counts$status_name[i])
+        cards[[length(cards) + 1]] <- make_status_card(
+          counts$status_name[i], counts$n[i], cfg$bg, cfg$icon
         )
       }
 
       do.call(tagList, cards)
     })
 
-    # Agent table
+    # Agent table with loading state
+    output$agent_table_wrap <- renderUI({
+      if (is_loading()) {
+        return(div(class = "spinner-wrap",
+          div(class = "spinner-border text-primary", role = "status",
+            span(class = "sr-only", "Loading...")
+          )
+        ))
+      }
+      reactableOutput(ns("agent_table"))
+    })
+
     output$agent_table <- renderReactable({
       df <- filtered_data()
       if (nrow(df) == 0) {
@@ -214,26 +241,42 @@ live_status_server <- function(id) {
         striped = TRUE,
         highlight = TRUE,
         defaultPageSize = 50,
+        defaultSorted = list(Status = "asc"),
         columns = list(
-          Status = colDef(
+          `Agent Email` = colDef(minWidth = 220),
+          Platform = colDef(width = 90, align = "center",
             cell = function(value) {
-              color <- get_status_color(value)
+              bg <- if (value == "AWS") "#232f3e" else "#ff6a00"
               div(
                 style = paste0(
                   "display: inline-block; padding: 2px 8px; border-radius: 4px; ",
-                  "background-color: ", color, "; color: white; font-weight: bold;"
+                  "background: ", bg, "; color: white; font-size: 11px; font-weight: 600;"
                 ),
                 value
               )
             }
           ),
-          Duration = colDef(align = "right"),
-          `Routing Profile` = colDef(na = "-")
+          Status = colDef(width = 130,
+            cell = function(value) {
+              cfg <- get_config(value)
+              div(
+                style = paste0(
+                  "display: inline-block; padding: 3px 10px; border-radius: 4px; ",
+                  "background: ", cfg$bg, "; color: white; font-weight: 600; font-size: 12px;"
+                ),
+                value
+              )
+            }
+          ),
+          Duration = colDef(width = 110, align = "right",
+            style = list(fontFamily = "monospace", fontWeight = "bold")
+          ),
+          `Routing Profile` = colDef(minWidth = 150, na = "-")
         )
       )
     })
 
-    # Last updated timestamp
+    # Last updated
     output$last_updated <- renderText({
       auto_timer()
       paste("Updated:", format(Sys.time(), "%H:%M:%S"))
