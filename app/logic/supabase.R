@@ -1,7 +1,7 @@
 # ── Supabase snapshot readers + interval writers ─────────────
 
 box::use(
-  httr[GET, POST, add_headers, content, status_code],
+  httr[GET, POST, add_headers, content, content_type, status_code],
   jsonlite[fromJSON, toJSON],
   dplyr[...],
   tidyr[pivot_wider],
