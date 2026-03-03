@@ -84,15 +84,8 @@ run_interval_computation <- function() {
 
 #' @export
 start_interval_job <- function() {
-  message("[COMPUTE] Starting background interval job (every 5 min)")
+  message("[COMPUTE] Background interval job scheduled (first run in 30s, then every 5 min)")
 
-  # Run once immediately
-  tryCatch(
-    run_interval_computation(),
-    error = function(e) message(paste("[COMPUTE] Initial run error:", e$message))
-  )
-
-  # Schedule recurring
   schedule_next <- function() {
     later(function() {
       tryCatch(
@@ -103,6 +96,12 @@ start_interval_job <- function() {
     }, delay = COMPUTE_INTERVAL_SECS)
   }
 
-  schedule_next()
-  message("[COMPUTE] Background job scheduled")
+  # Defer first run by 30s so the UI loads immediately
+  later(function() {
+    tryCatch(
+      run_interval_computation(),
+      error = function(e) message(paste("[COMPUTE] Initial run error:", e$message))
+    )
+    schedule_next()
+  }, delay = 30)
 }
