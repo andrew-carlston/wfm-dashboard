@@ -1,0 +1,189 @@
+// ── WFM Dashboard Styles ─────────────────────────────────────
+
+// Status colors
+$color-available: #28a745;
+$color-on-call: #007bff;
+$color-acw: #ffc107;
+$color-break: #fd7e14;
+$color-lunch: #e83e8c;
+$color-training: #6f42c1;
+$color-meeting: #20c997;
+$color-coaching: #17a2b8;
+$color-not-ready: #dc3545;
+$color-offline: #6c757d;
+
+// ── Status Grid ─────────────────────────────────────────────
+.status-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(380px, 1fr));
+  gap: 16px;
+  padding: 0 4px;
+}
+
+.status-card {
+  border-radius: 8px;
+  overflow: hidden;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.12);
+  background: #fff;
+}
+
+.status-card-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 16px;
+  color: #fff;
+  font-weight: 600;
+
+  .status-label {
+    font-size: 15px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+
+  .status-count {
+    font-size: 22px;
+    font-weight: 700;
+  }
+}
+
+.status-card-body {
+  max-height: 280px;
+  overflow-y: auto;
+
+  table {
+    width: 100%;
+    margin: 0;
+    font-size: 13px;
+
+    th {
+      position: sticky;
+      top: 0;
+      background: #f8f9fa;
+      padding: 6px 12px;
+      font-weight: 600;
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      color: #666;
+      border-bottom: 2px solid #dee2e6;
+    }
+
+    td {
+      padding: 5px 12px;
+      border-bottom: 1px solid #f0f0f0;
+      white-space: nowrap;
+
+      &.duration {
+        font-family: 'SF Mono', 'Consolas', 'Monaco', monospace;
+        text-align: right;
+        font-weight: 500;
+      }
+    }
+
+    tr:hover {
+      background: #f8f9fa;
+    }
+  }
+}
+
+// ── Platform badges ─────────────────────────────────────────
+.platform-badge {
+  display: inline-block;
+  padding: 1px 6px;
+  border-radius: 3px;
+  font-size: 10px;
+  font-weight: 600;
+  color: #fff;
+}
+
+.platform-aws {
+  background: #232f3e;
+}
+
+.platform-five9 {
+  background: #ff6a00;
+}
+
+// ── Summary bar ─────────────────────────────────────────────
+.summary-bar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0;
+  margin-bottom: 16px;
+  background: #fff;
+  border-radius: 8px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+  overflow: hidden;
+}
+
+.summary-chip {
+  flex: 1 1 0;
+  min-width: 80px;
+  text-align: center;
+  padding: 12px 8px;
+  color: #fff;
+  border-right: 1px solid rgba(255, 255, 255, 0.15);
+
+  &:last-child {
+    border-right: none;
+  }
+
+  .chip-count {
+    font-size: 24px;
+    font-weight: 700;
+    line-height: 1;
+  }
+
+  .chip-label {
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    opacity: 0.9;
+    margin-top: 2px;
+  }
+}
+
+// ── Panel (replaces bs4Card) ────────────────────────────────
+.panel {
+  background: #fff;
+  border-radius: 8px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+  margin-bottom: 16px;
+  overflow: hidden;
+}
+
+.panel-header {
+  padding: 12px 16px;
+  font-weight: 600;
+  font-size: 15px;
+  background: $color-on-call;
+  color: #fff;
+
+  &.panel-warning {
+    background: $color-acw;
+    color: #333;
+  }
+
+  &.panel-danger {
+    background: $color-not-ready;
+  }
+
+  &.panel-info {
+    background: $color-coaching;
+  }
+}
+
+.panel-body {
+  padding: 16px;
+}
+
+.panel-collapsed .panel-body {
+  display: none;
+}
+
+// ── Recalculating overlay suppression ───────────────────────
+.recalculating {
+  opacity: 1 !important;
+}

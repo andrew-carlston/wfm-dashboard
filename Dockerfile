@@ -1,6 +1,7 @@
 FROM rocker/shiny:4.3.1
 
-RUN install2.r bs4Dash httr jsonlite dplyr tidyr lubridate DT reactable googlesheets4 gargle
+RUN install2.r rhino box sass httr jsonlite dplyr tidyr lubridate \
+    reactable googlesheets4 gargle later bslib
 
 COPY . /srv/shiny-server/app
 
