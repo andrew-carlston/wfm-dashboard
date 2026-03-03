@@ -192,6 +192,12 @@ live_status_server <- function(id) {
       message(paste("[LIVE] Total rows:", nrow(df)))
       if (nrow(df) == 0) return(data.frame())
 
+      # Filter out stale offline agents (>24hr = not truly active)
+      df <- df %>%
+        filter(!(status_name == "Offline" & status_duration > 86400))
+
+      if (nrow(df) == 0) return(data.frame())
+
       df %>% mutate(duration_fmt = fmt_duration(status_duration))
     })
 
